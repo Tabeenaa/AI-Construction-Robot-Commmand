@@ -139,7 +139,10 @@ def execute_cartesian_trajectory(
         s = 10 * (tau ** 3) - 15 * (tau ** 4) + 6 * (tau ** 5)  # Minimum-Jerk
         waypoints[i] = start_pos + s * (target_pos - start_pos)
     
-    console.print(f"[dim]Executing Cartesian trajectory ({len(waypoints)} frames, {duration:.1f}s smooth motion) ...[/dim]")
+    console.print(f"[bold cyan]▶ EXECUTING:[/bold cyan] {task_name}")
+    console.print(f"  Start  → [{start_pos[0]:.3f}, {start_pos[1]:.3f}, {start_pos[2]:.3f}] m")
+    console.print(f"  Target → [{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}] m  (dist={dist*100:.1f} cm)")
+    console.print(f"  Motion → {duration:.1f}s @ {speed_mps:.2f} m/s  ({len(waypoints)} frames, Minimum-Jerk profile)")
     
     ee_site_id = ik_solver.site_id
     mocap_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "human_marker")
@@ -147,10 +150,19 @@ def execute_cartesian_trajectory(
     
     step_delay = duration / num_steps
     estop_triggered = False
+    milestones_printed = set()
 
-    for pt in waypoints:
+    for idx, pt in enumerate(waypoints):
         if not viewer.is_running():
             break
+
+        # Log progress at 25% milestones
+        pct = int((idx / max(num_steps - 1, 1)) * 100)
+        milestone = (pct // 25) * 25
+        if milestone in (25, 50, 75) and milestone not in milestones_printed:
+            milestones_printed.add(milestone)
+            ee_now = data.site_xpos[ee_site_id]
+            console.print(f"  [dim]{milestone}% → EE=[{ee_now[0]:.3f}, {ee_now[1]:.3f}, {ee_now[2]:.3f}][/dim]")
 
         # Solve IK for waypoint
         success, q_sol, err = ik_solver.solve_ik(data, pt, max_iters=25)
@@ -196,18 +208,8 @@ def run_construction_scenario(model, data, viewer, ik_solver, scenario: dict, ch
     human = scenario["human_nearby"]
     dist = scenario["distance_m"]
 
-    # Adapt target coordinates to active manipulator workspace
-    if "custom_arm" in str(XML_PATH):
-        task_type = scenario.get("task", "general")
-        home_ee = np.array([0.737, -1.983, 1.083], dtype=np.float64)
-        if task_type == "drill":
-            target_pos = home_ee + np.array([0.02, 0.03, -0.03])
-        elif task_type == "pick_and_place":
-            target_pos = home_ee + np.array([-0.03, 0.04, -0.04])
-        elif task_type == "handover":
-            target_pos = home_ee + np.array([0.02, 0.03, -0.02])
-        elif task_type == "general":
-            target_pos = home_ee + np.array([0.40, 0.40, 0.20])  # Beyond reach
+    # NOTE: Use scenario's actual target positions — they are within the KUKA/custom arm workspace.
+    # No override needed; each scenario has distinct, realistic Cartesian coordinates.
 
     console.print(Panel(
         f"[bold white]Task Name      :[/bold white] {scenario['name']}\n"
@@ -296,10 +298,15 @@ def main():
     console.print("[bold green]✔ Simulation live. Select a construction scenario below.[/bold green]")
 
     while viewer.is_running():
-        # Settle
-        data.ctrl[:7] = data.qpos[:7]
-        mujoco.mj_step(model, data)
-        viewer.sync()
+        # Settle physics for 2 seconds before showing menu (keeps viewer alive & avoids spam)
+        settle_steps = int(2.0 / model.opt.timestep)
+        for _ in range(settle_steps):
+            data.ctrl[:7] = data.qpos[:7]
+            mujoco.mj_step(model, data)
+            if viewer.is_running():
+                viewer.sync()
+        if not viewer.is_running():
+            break
 
         print()
         console.print("[bold cyan]╔═══════════════════ AI CONSTRUCTION SIMULATOR MENU ═══════════════════╗[/bold cyan]")
@@ -339,11 +346,12 @@ def main():
                         if p.get("target_x") is not None and p.get("target_y") is not None and p.get("target_z") is not None:
                             t_pos = np.array([p["target_x"], p["target_y"], p["target_z"]], dtype=np.float64)
                         else:
-                            dx = p.get("delta_x", 0.0)
-                            dy = p.get("delta_y", 0.0)
-                            dz = p.get("delta_z", 0.0)
+                            # Scale relative deltas to 15 cm for clearly observable motion
+                            dx = p.get("delta_x", 0.0) * 2.5
+                            dy = p.get("delta_y", 0.0) * 2.5
+                            dz = p.get("delta_z", 0.0) * 2.5
                             if dx == 0 and dy == 0 and dz == 0:
-                                dx = 0.04
+                                dx = 0.15  # Default: extend forward 15 cm
                             t_pos = curr_ee + np.array([dx, dy, dz], dtype=np.float64)
                         
                         exec_spd = p.get("speed_mps", 0.3)
