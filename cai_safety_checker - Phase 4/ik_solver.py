@@ -14,7 +14,8 @@ import math
 import numpy as np
 import mujoco
 
-DEFAULT_HOME_QPOS = np.array([0.0, 0.785398, 0.0, -1.5708, 0.0, 0.0, 0.0], dtype=np.float64)
+# Fully upright home: EE at [0, 0, 1.306] — gives maximum range for observable downward/outward motion
+DEFAULT_HOME_QPOS = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
 
 
 class CartesianIKSolver:

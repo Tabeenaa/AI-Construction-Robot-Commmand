@@ -69,12 +69,18 @@ def reset_robot_state(model, data, payload_kg: float, human_nearby: bool, distan
     # Position human marker mocap body
     mocap_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "human_marker")
     mocap_idx = model.body_mocapid[mocap_id]
+    human_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "human_sphere")
     if human_nearby:
+        # Place human marker at the correct distance in front of robot
         data.mocap_pos[mocap_idx] = [distance_m, 0.0, 0.5]
+        if human_geom_id >= 0:
+            model.geom_rgba[human_geom_id] = [1.0, 0.2, 0.2, 0.7]   # visible red sphere
     else:
-        data.mocap_pos[mocap_idx] = [0.0, 0.0, -10.0]
-        
-    mujoco.mj_setConst(model, data)
+        # Completely hide the marker — move far underground AND make transparent
+        data.mocap_pos[mocap_idx] = [0.0, 0.0, -100.0]
+        if human_geom_id >= 0:
+            model.geom_rgba[human_geom_id] = [0.0, 0.0, 0.0, 0.0]   # fully invisible
+
     data.qpos[:7] = DEFAULT_HOME_QPOS
     data.qvel[:] = 0
     data.ctrl[:7] = DEFAULT_HOME_QPOS
@@ -314,25 +320,22 @@ def main():
     ik_solver = CartesianIKSolver(model, site_name="attachment_site")
 
     reset_robot_state(model, data, 0.0, False, 1.0, original_colors)
-    viewer = mujoco.viewer.launch_passive(model, data)
     
-    for _ in range(100):
-        data.ctrl[:7] = data.qpos[:7]
-        mujoco.mj_step(model, data)
+    # Print actual home EE position for confirmation
+    home_ee = ik_solver.get_end_effector_pos(data)
+    console.print(f"[bold green]✔ Arm homed. EE at [{home_ee[0]:.3f}, {home_ee[1]:.3f}, {home_ee[2]:.3f}] m[/bold green]")
+    
+    viewer = mujoco.viewer.launch_passive(model, data)
     viewer.sync()
 
     console.print("[bold green]✔ Simulation live. Select a construction scenario below.[/bold green]")
 
     while viewer.is_running():
-        # Settle physics for 2 seconds before showing menu (keeps viewer alive & avoids spam)
-        settle_steps = int(2.0 / model.opt.timestep)
-        for _ in range(settle_steps):
-            data.ctrl[:7] = data.qpos[:7]
-            mujoco.mj_step(model, data)
-            if viewer.is_running():
-                viewer.sync()
-        if not viewer.is_running():
-            break
+        # Keep viewer alive while menu is shown — minimal physics hold
+        data.ctrl[:7] = data.qpos[:7]
+        mujoco.mj_forward(model, data)
+        if viewer.is_running():
+            viewer.sync()
 
         print()
         console.print("[bold cyan]╔═══════════════════ AI CONSTRUCTION SIMULATOR MENU ═══════════════════╗[/bold cyan]")
