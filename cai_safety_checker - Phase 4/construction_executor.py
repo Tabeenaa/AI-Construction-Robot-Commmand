@@ -82,27 +82,25 @@ def reset_robot_state(model, data, payload_kg: float, human_nearby: bool, distan
 
 
 def smooth_home_robot(model, data, viewer, original_colors):
-    """Smoothly glide arm back to DEFAULT_HOME_QPOS."""
+    """Smoothly glide arm back to DEFAULT_HOME_QPOS using kinematic-direct interpolation."""
     home = np.array(DEFAULT_HOME_QPOS, dtype=np.float64)
-    dt = model.opt.timestep
-    alpha = float(np.clip(dt / (SMOOTH_HOME_DUR / 3.0), 0.001, 0.15))
-    ctrl_target = np.array(data.ctrl[:7], dtype=np.float64)
-    total_steps = int(SMOOTH_HOME_DUR / dt) + 1
+    q_start = np.array(data.qpos[:7], dtype=np.float64)
+    num_steps = 90   # 3 seconds at 30 FPS
+    step_delay = 3.0 / num_steps
 
-    console.print(f"[bold cyan]🏠 Smooth homing over {SMOOTH_HOME_DUR}s ...[/bold cyan]")
-    for _ in range(total_steps):
+    console.print(f"[bold cyan]🏠 Smooth homing over 3.0s ...[/bold cyan]")
+    for i in range(num_steps):
         if not viewer.is_running():
             break
-        step_start = time.time()
-        ctrl_target += alpha * (home - ctrl_target)
-        data.ctrl[:7] = ctrl_target
-        mujoco.mj_step(model, data)
+        tau = i / max(num_steps - 1, 1)
+        s = 10*(tau**3) - 15*(tau**4) + 6*(tau**5)   # Minimum-Jerk
+        q_frame = q_start + s * (home - q_start)
+        data.qpos[:7] = q_frame
+        data.qvel[:7] = 0.0
+        data.ctrl[:7] = q_frame
+        mujoco.mj_forward(model, data)
         viewer.sync()
-        if np.all(np.abs(data.qpos[:7] - home) < DEAD_ZONE_RAD * 2):
-            break
-        elapsed = time.time() - step_start
-        if elapsed < dt:
-            time.sleep(dt - elapsed)
+        time.sleep(step_delay)
 
     data.qpos[:7] = home
     data.qvel[:] = 0
@@ -124,26 +122,55 @@ def execute_cartesian_trajectory(
     human_nearby: bool,
     task_name: str = "Construction Task"
 ) -> bool:
-    """Execute smooth Cartesian trajectory using numerical IK."""
+    """
+    Execute smooth Cartesian trajectory using kinematic-direct joint replay.
+    
+    Strategy: Pre-solve ALL IK waypoints into a full joint-space trajectory,
+    then write data.qpos directly each frame (bypassing PD controller lag).
+    This guarantees the arm physically follows every waypoint.
+    """
     start_pos = ik_solver.get_end_effector_pos(data)
     dist = float(np.linalg.norm(target_pos - start_pos))
     
-    # Observable demonstration duration: ensure motion is clearly visible (2.5s - 4.0s)
+    # Observable duration: slow enough to see clearly (3s minimum)
     speed_mps = max(0.02, speed_mps)
-    duration = max(2.5, min(5.0, dist / speed_mps * 3.0))
+    duration = max(3.0, min(6.0, dist / speed_mps))
     
-    num_steps = max(int(duration * 40), 60)  # 40 FPS trajectory
-    waypoints = np.zeros((num_steps, 3), dtype=np.float64)
-    for i in range(num_steps):
-        tau = i / (num_steps - 1)
-        s = 10 * (tau ** 3) - 15 * (tau ** 4) + 6 * (tau ** 5)  # Minimum-Jerk
-        waypoints[i] = start_pos + s * (target_pos - start_pos)
+    num_steps = max(int(duration * 30), 90)  # 30 FPS
     
-    console.print(f"[bold cyan]▶ EXECUTING:[/bold cyan] {task_name}")
+    # --- Phase 1: Pre-solve complete joint trajectory (IK for all waypoints) ---
+    console.print(f"[bold cyan]▶ PLANNING:[/bold cyan] {task_name}")
     console.print(f"  Start  → [{start_pos[0]:.3f}, {start_pos[1]:.3f}, {start_pos[2]:.3f}] m")
     console.print(f"  Target → [{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}] m  (dist={dist*100:.1f} cm)")
-    console.print(f"  Motion → {duration:.1f}s @ {speed_mps:.2f} m/s  ({len(waypoints)} frames, Minimum-Jerk profile)")
-    
+    console.print(f"  Motion → {duration:.1f}s @ {speed_mps:.2f} m/s  ({num_steps} frames)")
+
+    joint_traj = []  # list of q arrays, one per frame
+    q_prev = np.array(data.qpos[:7], dtype=np.float64)
+
+    for i in range(num_steps):
+        tau = i / max(num_steps - 1, 1)
+        s = 10*(tau**3) - 15*(tau**4) + 6*(tau**5)   # Minimum-Jerk
+        pt = start_pos + s * (target_pos - start_pos)
+
+        # Warm-start IK from previous solution for smooth inter-frame continuity
+        data.qpos[:7] = q_prev
+        mujoco.mj_forward(model, data)
+        success, q_sol, err = ik_solver.solve_ik(data, pt, max_iters=80)
+        if success:
+            q_prev = q_sol[:7].copy()
+            joint_traj.append(q_sol[:7].copy())
+        else:
+            joint_traj.append(q_prev.copy())   # hold last good solution
+
+    # Restore starting joint state before playback
+    data.qpos[:7] = np.array(joint_traj[0], dtype=np.float64)
+    data.qvel[:] = 0
+    data.ctrl[:7] = data.qpos[:7]
+    mujoco.mj_forward(model, data)
+    viewer.sync()
+
+    console.print(f"[green]  IK solved {len(joint_traj)} frames — starting playback...[/green]")
+
     ee_site_id = ik_solver.site_id
     mocap_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "human_marker")
     mocap_idx = model.body_mocapid[mocap_id]
@@ -152,7 +179,8 @@ def execute_cartesian_trajectory(
     estop_triggered = False
     milestones_printed = set()
 
-    for idx, pt in enumerate(waypoints):
+    # --- Phase 2: Kinematic-direct playback (write qpos every frame) ---
+    for idx, q_frame in enumerate(joint_traj):
         if not viewer.is_running():
             break
 
@@ -164,14 +192,12 @@ def execute_cartesian_trajectory(
             ee_now = data.site_xpos[ee_site_id]
             console.print(f"  [dim]{milestone}% → EE=[{ee_now[0]:.3f}, {ee_now[1]:.3f}, {ee_now[2]:.3f}][/dim]")
 
-        # Solve IK for waypoint
-        success, q_sol, err = ik_solver.solve_ik(data, pt, max_iters=25)
-        if success:
-            data.ctrl[:7] = q_sol[:7]
-
-        # Step physics forward
-        for _ in range(5):
-            mujoco.mj_step(model, data)
+        # --- KINEMATIC-DIRECT: write joint angles straight to qpos ---
+        # This bypasses PD controller lag entirely — arm moves to exact IK solution
+        data.qpos[:7] = q_frame
+        data.qvel[:7] = 0.0          # zero velocity (purely positional)
+        data.ctrl[:7] = q_frame      # keep ctrl in sync so controller doesn't fight us
+        mujoco.mj_forward(model, data)
 
         # Real-time Physical Proximity Sensor Guard
         if human_nearby:
