@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Construction Robot Command Center | Constitutional AI</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Top Executive Header -->
+  <header class="top-header">
+    <div class="brand-section">
+      <div class="brand-icon">🏗</div>
+      <div class="brand-text">
+        <h1>AI Construction Robot Command Center</h1>
+        <p>15th China AI Innovation in AI Construction · Constitutional AI & Autonomous Execution</p>
+      </div>
+    </div>
+    <div class="badge-row">
+      <span class="badge primary">ISO/TS 15066 SSM</span>
+      <span class="badge primary">GB 50870 Machinery</span>
+      <span class="badge">Qwen2.5-3B Local Edge</span>
+      <span class="badge status-online">System Live</span>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Metric Gauges Row -->
+    <section class="gauges-grid">
+      <div class="gauge-card">
+        <div class="gauge-title">
+          <span>Cartesian Velocity</span>
+          <span style="color: var(--accent-blue);">ISO 15066</span>
+        </div>
+        <div class="gauge-value" id="gaugeSpeed">0.30 <span style="font-size: 16px; font-weight: 500;">m/s</span></div>
+        <div class="gauge-subtext" id="gaugeSpeedCap">Dynamic SSM Limit: 0.50 m/s</div>
+      </div>
+
+      <div class="gauge-card">
+        <div class="gauge-title">
+          <span>Worker Proximity</span>
+          <span id="zoneBadge" style="color: #059669;">Clear Zone</span>
+        </div>
+        <div class="gauge-value" id="gaugeDist">1.20 <span style="font-size: 16px; font-weight: 500;">m</span></div>
+        <div class="gauge-subtext">Stop Boundary: 0.30 m</div>
+      </div>
+
+      <div class="gauge-card">
+        <div class="gauge-title">
+          <span>Tool Payload</span>
+          <span style="color: var(--text-muted);">GB 50870 §4.2</span>
+        </div>
+        <div class="gauge-value" id="gaugePayload">2.0 <span style="font-size: 16px; font-weight: 500;">kg</span></div>
+        <div class="gauge-subtext">Structural Limit: 5.0 kg</div>
+      </div>
+
+      <div class="gauge-card">
+        <div class="gauge-title">
+          <span>Audit Compliance</span>
+          <span id="gaugeRate" style="color: #059669;">94.2% Safe</span>
+        </div>
+        <div class="gauge-value" id="gaugeTotal">0 <span style="font-size: 16px; font-weight: 500;">Decisions</span></div>
+        <div class="gauge-subtext" id="gaugeLatency">Avg Latency: 0.0 ms</div>
+      </div>
+    </section>
+
+    <!-- Center Workspace: Radar & CAI Inspector -->
+    <section class="workspace-grid">
+      
+      <!-- 2D Dynamic Site Safety Radar -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🎯</span> 2D Construction Site Safety Radar (ISO/TS 15066 SSM)
+          </div>
+          <span style="font-size: 12px; color: var(--text-secondary);">Top-Down Workspace View</span>
+        </div>
+        <div class="radar-container">
+          <canvas id="radarCanvas" width="460" height="320"></canvas>
+          <div class="radar-legend">
+            <div class="legend-item"><span class="legend-dot" style="background: #2563EB;"></span> Robot Base</div>
+            <div class="legend-item"><span class="legend-dot" style="background: #10B981;"></span> End-Effector (IK)</div>
+            <div class="legend-item"><span class="legend-dot" style="background: #EF4444;"></span> Human Worker</div>
+            <div class="legend-item"><span class="legend-dot" style="background: #F59E0B;"></span> SSM Restricted Zone</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Constitutional AI Live Audit Inspector -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>⚖️</span> Constitutional AI Critique & Revision Inspector
+          </div>
+          <span class="verdict-pill pill-ALLOW" id="liveVerdictBadge">ALLOW</span>
+        </div>
+
+        <div class="audit-box">
+          <div>
+            <div class="audit-field-label">Dispatched Command</div>
+            <div class="audit-field-content" id="liveCommandText">"drill anchor hole at X=0.45, Y=0.20, Z=0.35 at safe speed 0.3 m/s with worker at 1.2 m"</div>
+          </div>
+
+          <div>
+            <div class="audit-field-label">Violated Safety Principles / Standard Citations</div>
+            <div class="audit-field-content" id="liveViolationsText" style="color: #64748B;">None. Fully compliant with ISO/TS 15066 and GB 50870.</div>
+          </div>
+
+          <div>
+            <div class="audit-field-label">Safety Compliance Reasoning</div>
+            <div class="audit-field-content" id="liveReasonText">Worker distance 1.2 m is within restricted zone. Commanded Cartesian velocity 0.30 m/s satisfies ISO/TS 15066 collaborative speed threshold (<= 0.50 m/s).</div>
+          </div>
+
+          <div>
+            <div class="audit-field-label">Extracted Kinematic & Physics Parameters</div>
+            <div class="code-snippet" id="liveParamsJson">{ "task": "drill", "target": [0.45, 0.20, 0.35], "speed_mps": 0.30, "payload_kg": 2.0 }</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Command Dispatch Section -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span>🚀</span> Construction Task Dispatch Console
+        </div>
+        <span style="font-size: 12px; color: var(--text-secondary);">Direct Natural Language Interception</span>
+      </div>
+
+      <div class="preset-buttons">
+        <button class="preset-btn" onclick="applyPreset('drill_safe')">🔧 Preset: Anchor Drilling (Safe)</button>
+        <button class="preset-btn" onclick="applyPreset('rebar_overload')">📦 Preset: Rebar Overload (Modify)</button>
+        <button class="preset-btn" onclick="applyPreset('cobot_handover')">🤝 Preset: Cobot Handover (SSM)</button>
+        <button class="preset-btn" onclick="applyPreset('speed_breach')">⚠️ Preset: Proximity Speed Breach (Refuse)</button>
+        <button class="preset-btn" onclick="applyPreset('estop_bypass')">🚫 Preset: E-STOP Bypass (Refuse)</button>
+      </div>
+
+      <form class="dispatch-form" id="commandForm" onsubmit="handleDispatch(event)">
+        <input 
+          type="text" 
+          id="cmdInput" 
+          class="dispatch-input" 
+          placeholder="Enter construction command in plain English (e.g. 'drill anchor hole at X=0.45, Y=0.20, Z=0.35 at 0.3 m/s with worker at 1.2 m')"
+          required
+        >
+        <button type="submit" class="dispatch-btn" id="submitBtn">
+          <span>Audit & Run</span> ➔
+        </button>
+      </form>
+    </section>
+
+    <!-- Recent Audit Logs Table -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span>📋</span> Tamper-Evident Civil Safety Audit Trail (SQLite)
+        </div>
+        <div>
+          <button class="preset-btn" onclick="fetchAuditLogs()">🔄 Refresh</button>
+          <button class="preset-btn" onclick="exportAuditJson()">💾 Export JSON</button>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Timestamp</th>
+              <th>Task</th>
+              <th>Command Summary</th>
+              <th>Verdict</th>
+              <th>Principles Violated</th>
+              <th>Latency</th>
+            </tr>
+          </thead>
+          <tbody id="auditTableBody">
+            <tr>
+              <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading audit logs...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

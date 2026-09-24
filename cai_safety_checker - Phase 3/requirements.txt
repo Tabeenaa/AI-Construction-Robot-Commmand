@@ -1,0 +1,3 @@
+llama-cpp-python==0.2.90
+huggingface-hub>=0.25.0
+rich>=15.0.0

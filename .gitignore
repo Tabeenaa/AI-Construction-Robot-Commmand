@@ -1,0 +1,30 @@
+# Virtual Environments
+venv/
+*/venv/
+.venv/
+*/.venv/
+
+# Large Model Weights (>100MB cannot be pushed to GitHub)
+*.gguf
+*/models/*.gguf
+*/models/.cache/
+.cache/
+
+# Python Cache & Bytecode
+__pycache__/
+*/__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary Lock Files & Logs
+~$*
+*/~$*
+*.tmp
+*.log
+*/logs/*.log
+*/logs/*.db
+*.db
+
+# Environment variables
+.env
+*/.env

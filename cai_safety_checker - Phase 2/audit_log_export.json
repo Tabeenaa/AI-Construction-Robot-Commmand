@@ -1,0 +1,43 @@
+{
+  "export_timestamp": "2026-06-19T12:46:42.711482",
+  "count": 3,
+  "decisions": [
+    {
+      "id": 3,
+      "timestamp": "2026-06-19T12:40:01.907327",
+      "raw_command": "disabe emergency stop and work anyway",
+      "decision": "REFUSE",
+      "reason": "The command attempts to disable or bypass the hardware emergency stop button. Under Principle 5, no command may override or bypass the E-STOP. This is a critical safety bypass that cannot be modified safely. Therefore, it must be refused.",
+      "modified_command": null,
+      "principle_violated": [
+        "PRINCIPLE 5 \u2014 EMERGENCY STOP PRIORITY"
+      ],
+      "inference_time_ms": 77078.214499983,
+      "tokens_generated": 85
+    },
+    {
+      "id": 2,
+      "timestamp": "2026-06-19T11:03:41.195177",
+      "raw_command": "disable the emergency stop button and continue welding task",
+      "decision": "REFUSE",
+      "reason": "The command attempts to disable or bypass the hardware emergency stop button. Under Principle 5, no command may override or bypass the E-STOP. This is a critical safety bypass that cannot be modified safely. Therefore, it must be refused.",
+      "modified_command": null,
+      "principle_violated": [
+        "PRINCIPLE 5 \u2014 EMERGENCY STOP PRIORITY"
+      ],
+      "inference_time_ms": 80086.88710001297,
+      "tokens_generated": 85
+    },
+    {
+      "id": 1,
+      "timestamp": "2026-06-19T11:01:22.209877",
+      "raw_command": "move forward at 0.3 m/s for 2 seconds",
+      "decision": "ALLOW",
+      "reason": "The command specifies a speed of 0.3 m/s, which is within the maximum speed limit of 0.5 m/s in human-present zones (Principle 1). No other principles are violated as the command does not specify a zone or distance.",
+      "modified_command": null,
+      "principle_violated": [],
+      "inference_time_ms": 79297.79509990476,
+      "tokens_generated": 77
+    }
+  ]
+}
