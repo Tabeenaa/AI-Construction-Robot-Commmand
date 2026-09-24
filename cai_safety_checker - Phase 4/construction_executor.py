@@ -126,44 +126,54 @@ def execute_cartesian_trajectory(
 ) -> bool:
     """Execute smooth Cartesian trajectory using numerical IK."""
     start_pos = ik_solver.get_end_effector_pos(data)
-    waypoints, duration = generate_cartesian_trajectory(start_pos, target_pos, speed_mps=speed_mps)
+    dist = float(np.linalg.norm(target_pos - start_pos))
     
-    console.print(f"[dim]Executing Cartesian trajectory ({len(waypoints)} waypoints, {duration:.2f}s) ...[/dim]")
+    # Observable demonstration duration: ensure motion is clearly visible (2.5s - 4.0s)
+    speed_mps = max(0.02, speed_mps)
+    duration = max(2.5, min(5.0, dist / speed_mps * 3.0))
+    
+    num_steps = max(int(duration * 40), 60)  # 40 FPS trajectory
+    waypoints = np.zeros((num_steps, 3), dtype=np.float64)
+    for i in range(num_steps):
+        tau = i / (num_steps - 1)
+        s = 10 * (tau ** 3) - 15 * (tau ** 4) + 6 * (tau ** 5)  # Minimum-Jerk
+        waypoints[i] = start_pos + s * (target_pos - start_pos)
+    
+    console.print(f"[dim]Executing Cartesian trajectory ({len(waypoints)} frames, {duration:.1f}s smooth motion) ...[/dim]")
     
     ee_site_id = ik_solver.site_id
     mocap_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "human_marker")
     mocap_idx = model.body_mocapid[mocap_id]
     
-    dt = model.opt.timestep
+    step_delay = duration / num_steps
     estop_triggered = False
 
     for pt in waypoints:
         if not viewer.is_running():
             break
-        step_start = time.time()
 
         # Solve IK for waypoint
         success, q_sol, err = ik_solver.solve_ik(data, pt, max_iters=25)
         if success:
             data.ctrl[:7] = q_sol[:7]
 
-        mujoco.mj_step(model, data)
+        # Step physics forward
+        for _ in range(5):
+            mujoco.mj_step(model, data)
 
         # Real-time Physical Proximity Sensor Guard
         if human_nearby:
             ee_pos = data.site_xpos[ee_site_id]
             human_pos = data.mocap_pos[mocap_idx]
-            dist = np.linalg.norm(ee_pos - human_pos)
-            if dist < 0.30:  # Absolute stop boundary
+            dist_to_human = np.linalg.norm(ee_pos - human_pos)
+            if dist_to_human < 0.30:  # Absolute stop boundary
                 estop_triggered = True
                 set_robot_color(model, original_colors, [1.0, 0.0, 0.0, 0.9])
-                console.print(f"\n[bold red]❌ PHYSICAL E-STOP TRIGGERED: Worker proximity breach ({dist:.2f} m < 0.30 m)![/bold red]")
+                console.print(f"\n[bold red]❌ PHYSICAL E-STOP TRIGGERED: Worker proximity breach ({dist_to_human:.2f} m < 0.30 m)![/bold red]")
                 break
 
         viewer.sync()
-        elapsed = time.time() - step_start
-        if elapsed < dt:
-            time.sleep(dt - elapsed)
+        time.sleep(step_delay)
 
     if not estop_triggered:
         final_pos = ik_solver.get_end_effector_pos(data)
@@ -259,6 +269,7 @@ def run_construction_scenario(model, data, viewer, ik_solver, scenario: dict, ch
 def main():
     parser = argparse.ArgumentParser(description="AI Construction Manipulator Safety Executor")
     parser.add_argument("--model", type=str, default=str(XML_PATH), help="Path to MuJoCo scene XML")
+    parser.add_argument("--llm", action="store_true", help="Enable deep offline LLM reasoning (default: instant fast rule mode)")
     args = parser.parse_args()
 
     console.print(Panel(
@@ -268,7 +279,7 @@ def main():
         border_style="cyan"
     ))
 
-    checker = RobotSafetyChecker()
+    checker = RobotSafetyChecker(use_llm=args.llm)
     model = mujoco.MjModel.from_xml_path(args.model)
     data = mujoco.MjData(model)
     original_colors = np.copy(model.geom_rgba)
@@ -316,15 +327,32 @@ def main():
                 sc_id = int(choice)
                 run_construction_scenario(model, data, viewer, ik_solver, CONSTRUCTION_SCENARIOS[sc_id], checker, original_colors)
             elif choice == "6":
-                cmd = input("Enter construction command: ").strip()
+                cmd = input("Enter construction command (e.g. 'move left 0.1m', 'drill hole', 'lift rebar', 'reach up'): ").strip()
                 if cmd:
                     verdict = checker.check(cmd)
                     console.print(f"[bold]Verdict:[/bold] {verdict.verdict} | [bold]Reason:[/bold] {verdict.reason}")
                     if verdict.verdict != "REFUSE":
                         p = verdict.extracted_parameters
-                        t_pos = np.array([p["target_x"], p["target_y"], p["target_z"]], dtype=np.float64)
-                        reset_robot_state(model, data, p["payload_kg"], p["human_nearby"], p["distance_m"], original_colors)
-                        execute_cartesian_trajectory(model, data, viewer, ik_solver, t_pos, p["speed_mps"], original_colors, p["human_nearby"], "Custom NL Task")
+                        curr_ee = ik_solver.get_end_effector_pos(data)
+                        
+                        # Determine Cartesian target from custom command
+                        if p.get("target_x") is not None and p.get("target_y") is not None and p.get("target_z") is not None:
+                            t_pos = np.array([p["target_x"], p["target_y"], p["target_z"]], dtype=np.float64)
+                        else:
+                            dx = p.get("delta_x", 0.0)
+                            dy = p.get("delta_y", 0.0)
+                            dz = p.get("delta_z", 0.0)
+                            if dx == 0 and dy == 0 and dz == 0:
+                                dx = 0.04
+                            t_pos = curr_ee + np.array([dx, dy, dz], dtype=np.float64)
+                        
+                        exec_spd = p.get("speed_mps", 0.3)
+                        exec_pay = p.get("payload_kg", 1.0)
+                        human = p.get("human_nearby", False)
+                        dist = p.get("distance_m", 2.0)
+                        
+                        reset_robot_state(model, data, exec_pay, human, dist, original_colors)
+                        execute_cartesian_trajectory(model, data, viewer, ik_solver, t_pos, exec_spd, original_colors, human, f"Custom: {cmd[:25]}")
             elif choice == "7":
                 stats = get_stats()
                 console.print(Panel(json.dumps(stats, indent=2), title="Audit Statistics", border_style="cyan"))

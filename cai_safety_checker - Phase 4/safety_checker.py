@@ -43,7 +43,7 @@ _file_handler = logging.handlers.RotatingFileHandler(
 _file_handler.setLevel(logging.DEBUG)
 _file_handler.setFormatter(logging.Formatter(
     "%(asctime)s | %(levelname)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S,%f"
+    datefmt="%Y-%m-%d %H:%M:%S"
 ))
 logger.addHandler(_file_handler)
 
@@ -81,9 +81,15 @@ def fallback_extract_construction_parameters(text: str) -> dict:
     """Rule-based parameter extractor for construction tasks."""
     params = {
         "task": "general",
-        "target_x": 0.50,
-        "target_y": 0.00,
-        "target_z": 0.35,
+        "action": "move",
+        "delta_x": 0.0,
+        "delta_y": 0.0,
+        "delta_z": 0.0,
+        "target_x": None,
+        "target_y": None,
+        "target_z": None,
+        "joint_id": None,
+        "joint_angle_deg": None,
         "speed_mps": 0.3,
         "payload_kg": 1.0,
         "human_nearby": False,
@@ -92,25 +98,62 @@ def fallback_extract_construction_parameters(text: str) -> dict:
     }
     
     t_lower = text.lower()
+    
+    # ── Task & Action Classification ──────────────────────────────────────────
     if "drill" in t_lower or "anchor" in t_lower:
         params["task"] = "drill"
-        params["target_x"] = 0.45
-        params["target_y"] = 0.20
-        params["target_z"] = 0.35
-    elif "rebar" in t_lower or "brick" in t_lower or "pick" in t_lower:
+        params["action"] = "drill"
+        params["delta_x"] = 0.04
+        params["delta_z"] = -0.04
+    elif "pick" in t_lower or "rebar" in t_lower or "lift" in t_lower or "load" in t_lower:
         params["task"] = "pick_and_place"
-        params["target_x"] = 0.40
-        params["target_y"] = -0.20
-        params["target_z"] = 0.30
-    elif "handover" in t_lower or "hand" in t_lower or "pass" in t_lower:
+        params["action"] = "pick"
+        params["delta_y"] = 0.05
+        params["delta_z"] = 0.04
+    elif "place" in t_lower or "drop" in t_lower or "unload" in t_lower:
+        params["task"] = "pick_and_place"
+        params["action"] = "place"
+        params["delta_y"] = -0.05
+        params["delta_z"] = -0.04
+    elif "handover" in t_lower or "pass" in t_lower or "give" in t_lower:
         params["task"] = "handover"
-        params["target_x"] = 0.50
-        params["target_y"] = 0.00
-        params["target_z"] = 0.30
+        params["action"] = "handover"
+        params["delta_x"] = 0.03
         params["human_nearby"] = True
         params["distance_m"] = 0.45
+    elif "inspect" in t_lower or "scan" in t_lower or "check" in t_lower:
+        params["task"] = "inspect"
+        params["action"] = "inspect"
+        params["delta_y"] = 0.04
+    elif "wave" in t_lower:
+        params["task"] = "wave"
+        params["action"] = "wave"
 
-    # Coordinates
+    # ── Relative Directions ───────────────────────────────────────────────────
+    if "left" in t_lower:
+        params["delta_y"] = 0.06
+    elif "right" in t_lower:
+        params["delta_y"] = -0.06
+        
+    if "forward" in t_lower or "front" in t_lower or "ahead" in t_lower or "reach" in t_lower or "extend" in t_lower:
+        params["delta_x"] = 0.06
+    elif "backward" in t_lower or "back" in t_lower or "retreat" in t_lower or "pull" in t_lower or "retract" in t_lower:
+        params["delta_x"] = -0.06
+
+    if "up" in t_lower or "raise" in t_lower or "elevate" in t_lower or "higher" in t_lower:
+        params["delta_z"] = 0.06
+    elif "down" in t_lower or "lower" in t_lower or "descend" in t_lower:
+        params["delta_z"] = -0.06
+
+    # ── Joint Specific Commands (e.g. "rotate joint 1 by 30 degrees") ─────────
+    mj = re.search(r'joint\s*(\d+)', text, re.IGNORECASE)
+    if mj:
+        params["joint_id"] = int(mj.group(1))
+    ma = re.search(r'([-\d\.]+)\s*(?:deg|degree|degrees)', text, re.IGNORECASE)
+    if ma:
+        params["joint_angle_deg"] = float(ma.group(1))
+
+    # ── Absolute Coordinates (e.g. X=0.45, Y=0.20, Z=0.35) ────────────────────
     mx = re.search(r'x\s*[:=]?\s*([-\d\.]+)', text, re.IGNORECASE)
     if mx: params["target_x"] = float(mx.group(1))
     my = re.search(r'y\s*[:=]?\s*([-\d\.]+)', text, re.IGNORECASE)
@@ -118,22 +161,21 @@ def fallback_extract_construction_parameters(text: str) -> dict:
     mz = re.search(r'z\s*[:=]?\s*([-\d\.]+)', text, re.IGNORECASE)
     if mz: params["target_z"] = float(mz.group(1))
 
-    # Speed
+    # ── Velocity / Speed ──────────────────────────────────────────────────────
     m_vel = re.search(r'([\d\.]+)\s*(?:m/s|mps|speed)', text, re.IGNORECASE)
     if m_vel:
         params["speed_mps"] = float(m_vel.group(1))
 
-    # Payload
+    # ── Payload Mass ──────────────────────────────────────────────────────────
     m_pay = re.search(r'([\d\.]+)\s*(?:kg|kilo)', text, re.IGNORECASE)
     if m_pay:
         params["payload_kg"] = float(m_pay.group(1))
 
-    # Human presence
-    if any(h in t_lower for h in ("human", "worker", "technician", "person", "operator")):
+    # ── Human Proximity ───────────────────────────────────────────────────────
+    if any(h in t_lower for h in ("human", "worker", "technician", "person", "operator", "nearby")):
         params["human_nearby"] = True
         params["zone"] = "restricted"
         
-    # Distance (exclude m/s)
     m_dist = re.search(r'(?:distance|at|range)\s*(?:of)?\s*([\d\.]+)\s*(?:m|meter|meters)(?!/s|ps)', text, re.IGNORECASE)
     if not m_dist:
         m_dist = re.search(r'([\d\.]+)\s*(?:m|meter|meters)(?!/s|ps)', text, re.IGNORECASE)
@@ -144,14 +186,15 @@ def fallback_extract_construction_parameters(text: str) -> dict:
 
 
 class RobotSafetyChecker:
-    """Constitutional AI Safety Engine running locally via llama-cpp-python."""
+    """Constitutional AI Safety Engine with Instant Fast Mode (<10ms) & Deep LLM Mode."""
 
-    def __init__(self, model_path: str = str(MODEL_PATH), n_ctx: int = 2048, n_gpu_layers: int = 0):
+    def __init__(self, model_path: str = str(MODEL_PATH), use_llm: bool = False, n_ctx: int = 2048, n_gpu_layers: int = 0):
         self.model_path = model_path
+        self.use_llm = use_llm
         self.llm = None
         n_threads = max(4, os.cpu_count() or 4)
         
-        if Path(model_path).exists():
+        if use_llm and Path(model_path).exists():
             print(f"Loading local GGUF model from {model_path} (threads={n_threads})...", flush=True)
             try:
                 self.llm = Llama(
@@ -164,9 +207,11 @@ class RobotSafetyChecker:
                 self.llm.set_cache(LlamaRAMCache(capacity_bytes=128 * 1024 * 1024))
                 print("✔ Local Qwen2.5-3B Constitutional AI Engine loaded successfully.", flush=True)
             except Exception as e:
-                print(f"⚠ Warning: Could not initialize local LLM ({e}). Operating in deterministic heuristic mode.", flush=True)
+                print(f"⚠ Warning: Could not initialize local LLM ({e}). Operating in Fast Mode.", flush=True)
+        elif not use_llm:
+            print("⚡ Constitutional AI operating in Instant Fast Mode (<15ms rule engine).", flush=True)
         else:
-            print(f"⚠ Model file not found at {model_path}. Running deterministic rule mode.", flush=True)
+            print(f"⚠ Model file not found at {model_path}. Running Fast Mode.", flush=True)
 
         self.system_prompt = (
             "You are a certified Construction Robotics Safety Compliance Engine.\n"
@@ -189,6 +234,7 @@ class RobotSafetyChecker:
 
     def check(self, command: str) -> SafetyVerdict:
         """Audit a natural language command against the constitution."""
+        logger.info(f"Checking command: '{command}'")
         start_time = time.perf_counter()
         
         if self.llm is not None:
@@ -238,6 +284,9 @@ class RobotSafetyChecker:
                     task_type=verdict.extracted_parameters.get("task", "general"),
                     cartesian_target=f"({verdict.extracted_parameters.get('target_x')}, {verdict.extracted_parameters.get('target_y')}, {verdict.extracted_parameters.get('target_z')})"
                 )
+                logger.info(f"VERDICT={verdict.verdict} | CONFIDENCE={verdict.confidence} | VIOLATED={verdict.violated_principles} | CMD='{command}'")
+                for h in logger.handlers:
+                    h.flush()
                 return verdict
             except Exception as ex:
                 logger.error(f"Inference exception: {ex}")
@@ -317,4 +366,7 @@ class RobotSafetyChecker:
             task_type=params.get("task", "general"),
             cartesian_target=f"({params.get('target_x')}, {params.get('target_y')}, {params.get('target_z')})"
         )
+        logger.info(f"VERDICT={verdict.verdict} | CONFIDENCE={verdict.confidence} | VIOLATED={verdict.violated_principles} | CMD='{command}'")
+        for h in logger.handlers:
+            h.flush()
         return verdict
